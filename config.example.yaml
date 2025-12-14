@@ -1,0 +1,56 @@
+# Notion Sync Tools Configuration
+# Copy this file to config.yaml and fill in your credentials
+# WARNING: Never commit config.yaml to version control!
+
+# Notion API Configuration
+notion:
+  # Get your integration token from: https://www.notion.so/my-integrations
+  # Create an internal integration and copy the "Internal Integration Token"
+  token: "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+  # Notion API version (usually no need to change)
+  api_version: "2022-06-28"
+
+# API Rate Limiting and Performance
+api:
+  # Maximum blocks to send in a single API request (Notion limit: 100)
+  max_blocks_per_request: 100
+
+  # Maximum text length per rich text object (Notion limit: 2000)
+  max_text_length: 2000
+
+  # Number of retry attempts for failed requests
+  retry_attempts: 3
+
+  # Delay between retries (seconds)
+  retry_delay: 1.0
+
+  # Delay between requests to avoid rate limiting (seconds)
+  rate_limit_delay: 0.5
+
+# Bulk Upload Configuration
+bulk_upload:
+  # Directories and patterns to exclude from bulk uploads
+  exclude_patterns:
+    - ".git"
+    - "node_modules"
+    - "__pycache__"
+    - ".venv"
+    - "venv"
+    - ".pytest_cache"
+    - ".tox"
+    - "build"
+    - "dist"
+    - ".eggs"
+    - "*.egg-info"
+
+# Logging Configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  # Log file path (optional, leave empty to log to console only)
+  file: ""

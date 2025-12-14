@@ -1,0 +1,14 @@
+# Core dependencies
+PyYAML>=5.4.0  # For YAML configuration file support
+
+# All other functionality uses only Python standard library
+# (urllib, json, pathlib, etc.)
+# Minimum Python version: 3.7
+
+# Optional development dependencies
+# Uncomment if you want to contribute or run tests:
+
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
+# mypy>=0.950
