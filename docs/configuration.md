@@ -1,3 +1,10 @@
+---
+notion_page_id: 2c9c95e7-d72e-8193-a81b-dd960a80e1a6
+notion_url: https://www.notion.so/configuration-2c9c95e7d72e8193a81bdd960a80e1a6
+title: configuration
+uploaded: 2025-12-14T12:06:01.838131
+---
+
 # Configuration Guide
 
 ## Overview
@@ -104,7 +111,7 @@ Environment variables **override** config.yaml values:
 
 For containers, use environment variables:
 
-```dockerfile
+```docker
 FROM python:3.9-slim
 
 WORKDIR /app

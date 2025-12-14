@@ -1,3 +1,10 @@
+---
+notion_page_id: 2c9c95e7-d72e-81c1-82d3-e1186a6820a2
+notion_url: https://www.notion.so/installation-2c9c95e7d72e81c182d3e1186a6820a2
+title: installation
+uploaded: 2025-12-14T12:05:21.228595
+---
+
 # Installation Guide
 
 ## Requirements

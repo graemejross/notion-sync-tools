@@ -1,3 +1,10 @@
+---
+notion_page_id: 2c9c95e7-d72e-81b1-a82e-ca3499f08f68
+notion_url: https://www.notion.so/README-2c9c95e7d72e81b1a82eca3499f08f68
+title: /README
+uploaded: 2025-12-14T12:08:50.892111
+---
+
 # Notion Sync Tools
 
 Bidirectional markdown ↔ Notion sync tools with full formatting preservation. Upload/download markdown files to Notion with YAML frontmatter tracking.
@@ -103,10 +110,10 @@ bulk-upload-notion <parent_page_id> /path/to/docs
 
 ## Documentation
 
-- [Installation Guide](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [Usage Examples](docs/usage.md)
-- [API Reference](docs/api.md)
+- Installation Guide (see installation page)
+- Configuration (see configuration page)
+- Usage Examples (see usage page)
+- API Reference (see api page)
 
 ## How It Works
 
@@ -135,12 +142,12 @@ The tools preserve all markdown formatting when converting to Notion blocks:
 - *Italic* → Notion italic annotation
 - `code` → Notion code annotation
 - ~~Strikethrough~~ → Notion strikethrough
-- [Links](url) → Notion link objects
+- Links `[text](url)` → Notion link objects
 - Tables → Notion table blocks (auto-split if > 100 rows)
 
 ## Examples
 
-See the [examples/](examples/) directory for:
+See the examples directory for:
 - Sample markdown files
 - Configuration examples
 - Common use cases
@@ -152,7 +159,7 @@ See the [examples/](examples/) directory for:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see LICENSE file for details.
 
 ## Contributing
 

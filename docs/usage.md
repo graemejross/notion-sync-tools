@@ -1,3 +1,10 @@
+---
+notion_page_id: 2c9c95e7-d72e-81dc-931a-ec4637a22279
+notion_url: https://www.notion.so/usage-2c9c95e7d72e81dc931aec4637a22279
+title: usage
+uploaded: 2025-12-14T12:07:30.622841
+---
+
 # Usage Guide
 
 ## Quick Reference
@@ -250,7 +257,7 @@ To re-upload as a NEW page:
 - *Italic* (`*text*`)
 - `Inline code` (`` `code` ``)
 - ~~Strikethrough~~ (`~~text~~`)
-- [Links](url) (`[text](url)`)
+- Links: `[text](url)`
 
 ✅ **Blocks:**
 - Headings (H1, H2, H3)
@@ -300,7 +307,7 @@ Check:
 
 - Check markdown syntax is correct
 - Some Notion features not available via API
-- See [Formatting Support](#formatting-support) section
+- See "Formatting Support" section below
 
 ### Large Files Slow
 
