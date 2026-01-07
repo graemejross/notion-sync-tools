@@ -3,51 +3,55 @@
 Upload markdown to Notion with full formatting and link preservation.
 
 Usage:
-    markdown-to-notion <markdown_file> <parent_page_id_or_url> [--update] [--config CONFIG]
+    ./markdown-to-notion.py <markdown_file> <parent_page_id_or_url> [--update]
 
 Features:
     - Preserves bold, italic, code, strikethrough, links
     - Reads YAML frontmatter for page ID (supports updates)
-    - Handles nested lists, code blocks, quotes, tables
+    - Handles nested lists, code blocks, quotes
     - Preserves internal Notion links
     - Supports creating or updating pages
 
 Options:
     --update    Update existing page (uses notion_page_id from frontmatter)
-    --config    Path to config file (default: config.yaml or env vars)
+    --force     With --update: delete ALL blocks including child pages (dangerous!)
 
 Example:
     # Create new page:
-    markdown-to-notion schema.md 2bfc95e7d72e816486a5cfb9a97fa8c9
+    ./markdown-to-notion.py schema.md 2bfc95e7d72e816486a5cfb9a97fa8c9
 
-    # Update existing page (requires frontmatter):
-    markdown-to-notion schema.md --update
+    # Update existing page (requires frontmatter with notion_page_id):
+    ./markdown-to-notion.py schema.md --update
 """
 
 import urllib.request
-import urllib.error
+import urllib.parse
 import json
 import sys
 import re
-import logging
-import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional
 
-from .config import load_config, Config
+# Configuration
+CREDENTIALS_FILE = Path.home() / ".notion-credentials"
+NOTION_API_VERSION = "2022-06-28"
+MAX_BLOCKS_PER_REQUEST = 100
+MAX_TEXT_LENGTH = 2000  # Notion's limit per rich text object
 
-# Set up logging
-logger = logging.getLogger(__name__)
+
+def read_notion_token():
+    """Read Notion API token from credentials file."""
+    with open(CREDENTIALS_FILE, 'r') as f:
+        for line in f:
+            if 'NOTION_TOKEN' in line:
+                return line.split('=')[1].strip().strip('"').strip("'")
+    raise ValueError("NOTION_TOKEN not found in credentials file")
 
 
-def extract_page_id(input_str: str) -> str:
+def extract_page_id(input_str):
     """Extract page ID from URL or use directly if it's an ID."""
     if 'notion.so' in input_str:
-        match = re.search(
-            r'([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
-            input_str
-        )
+        match = re.search(r'([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', input_str)
         if match:
             page_id = match.group(1)
             if '-' not in page_id:
@@ -56,7 +60,7 @@ def extract_page_id(input_str: str) -> str:
     return input_str
 
 
-def parse_frontmatter(content: str) -> Tuple[Dict[str, str], str]:
+def parse_frontmatter(content):
     """Parse YAML frontmatter from markdown."""
     frontmatter = {}
     content_without_frontmatter = content
@@ -76,7 +80,7 @@ def parse_frontmatter(content: str) -> Tuple[Dict[str, str], str]:
     return frontmatter, content_without_frontmatter
 
 
-def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]]:
+def parse_markdown_formatting(text):
     """Parse markdown formatting into Notion rich text objects."""
     rich_text = []
 
@@ -90,8 +94,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
         # Handle code spans
         if part.startswith('`') and part.endswith('`'):
             content = part[1:-1]
-            if len(content) > max_length:
-                content = content[:max_length]
+            if len(content) > MAX_TEXT_LENGTH:
+                content = content[:MAX_TEXT_LENGTH]
             rich_text.append({
                 "type": "text",
                 "text": {"content": content},
@@ -100,6 +104,7 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
             continue
 
         # Handle links, bold, italic
+        # Pattern: [text](url) or **bold** or *italic* or ~~strike~~
         pos = 0
         while pos < len(part):
             # Try to match link
@@ -118,8 +123,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
                 # Clean up link text
                 clean_text = link_text.replace('**', '').replace('*', '').replace('~~', '')
 
-                if len(clean_text) > max_length:
-                    clean_text = clean_text[:max_length]
+                if len(clean_text) > MAX_TEXT_LENGTH:
+                    clean_text = clean_text[:MAX_TEXT_LENGTH]
 
                 rich_text.append({
                     "type": "text",
@@ -133,8 +138,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
             bold_match = re.match(r'\*\*([^\*]+)\*\*', part[pos:])
             if bold_match:
                 content = bold_match.group(1)
-                if len(content) > max_length:
-                    content = content[:max_length]
+                if len(content) > MAX_TEXT_LENGTH:
+                    content = content[:MAX_TEXT_LENGTH]
                 rich_text.append({
                     "type": "text",
                     "text": {"content": content},
@@ -147,8 +152,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
             italic_match = re.match(r'\*([^\*]+)\*', part[pos:])
             if italic_match:
                 content = italic_match.group(1)
-                if len(content) > max_length:
-                    content = content[:max_length]
+                if len(content) > MAX_TEXT_LENGTH:
+                    content = content[:MAX_TEXT_LENGTH]
                 rich_text.append({
                     "type": "text",
                     "text": {"content": content},
@@ -161,8 +166,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
             strike_match = re.match(r'~~([^~]+)~~', part[pos:])
             if strike_match:
                 content = strike_match.group(1)
-                if len(content) > max_length:
-                    content = content[:max_length]
+                if len(content) > MAX_TEXT_LENGTH:
+                    content = content[:MAX_TEXT_LENGTH]
                 rich_text.append({
                     "type": "text",
                     "text": {"content": content},
@@ -170,6 +175,28 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
                 })
                 pos += len(strike_match.group(0))
                 continue
+
+            # Check if we're at a [ that's not a link - treat as regular text
+            if part[pos] == '[':
+                # Look for closing ] and check if followed by (
+                bracket_match = re.match(r'\[([^\]]+)\]', part[pos:])
+                if bracket_match:
+                    # Check if this is followed by ( - if so, it's a broken link, skip
+                    end_pos = pos + len(bracket_match.group(0))
+                    if end_pos < len(part) and part[end_pos] == '(':
+                        # Broken link syntax, skip the [
+                        pos += 1
+                        continue
+                    # Not followed by ( - include brackets as plain text
+                    content = bracket_match.group(0)  # Include the brackets
+                    if len(content) > MAX_TEXT_LENGTH:
+                        content = content[:MAX_TEXT_LENGTH]
+                    rich_text.append({
+                        "type": "text",
+                        "text": {"content": content}
+                    })
+                    pos += len(bracket_match.group(0))
+                    continue
 
             # Regular text until next special character
             next_special = len(part)
@@ -180,8 +207,8 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
 
             if next_special > pos:
                 content = part[pos:next_special]
-                if len(content) > max_length:
-                    content = content[:max_length]
+                if len(content) > MAX_TEXT_LENGTH:
+                    content = content[:MAX_TEXT_LENGTH]
                 rich_text.append({
                     "type": "text",
                     "text": {"content": content}
@@ -193,12 +220,11 @@ def parse_markdown_formatting(text: str, max_length: int) -> List[Dict[str, Any]
     return rich_text if rich_text else [{"type": "text", "text": {"content": ""}}]
 
 
-def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str, Any]]:
+def markdown_to_notion_blocks(md_content):
     """Convert markdown to Notion block objects."""
     blocks = []
     lines = md_content.split('\n')
     i = 0
-    max_text_length = config.max_text_length
 
     while i < len(lines):
         line = lines[i].rstrip()
@@ -214,7 +240,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "heading_1",
                 "heading_1": {
-                    "rich_text": parse_markdown_formatting(line[2:], max_text_length)
+                    "rich_text": parse_markdown_formatting(line[2:])
                 }
             })
         # Heading 2
@@ -223,7 +249,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": parse_markdown_formatting(line[3:], max_text_length)
+                    "rich_text": parse_markdown_formatting(line[3:])
                 }
             })
         # Heading 3
@@ -232,7 +258,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "heading_3",
                 "heading_3": {
-                    "rich_text": parse_markdown_formatting(line[4:], max_text_length)
+                    "rich_text": parse_markdown_formatting(line[4:])
                 }
             })
         # Code block
@@ -247,8 +273,8 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 i += 1
 
             code_text = '\n'.join(code_content)
-            if len(code_text) > max_text_length:
-                code_text = code_text[:max_text_length]
+            if len(code_text) > MAX_TEXT_LENGTH:
+                code_text = code_text[:MAX_TEXT_LENGTH]
 
             blocks.append({
                 "object": "block",
@@ -267,7 +293,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 i += 1
             i -= 1  # Back up one since we'll increment at the end
 
-            # Skip if it's a separator row only
+            # Skip if it's a separator row only (|---|---|)
             if table_lines and not all('-' in line or line == '|' for line in table_lines):
                 # Parse table
                 rows = []
@@ -283,19 +309,20 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
 
                 # Create proper Notion table
                 if rows and len(rows) > 0:
+                    # Determine number of columns
                     num_cols = len(rows[0])
 
-                    # Create table block with children
+                    # Create table block with children (table rows)
                     table_children = []
                     for row in rows:
-                        # Pad row if needed
+                        # Pad row if needed to match column count
                         while len(row) < num_cols:
                             row.append("")
 
                         # Create table_row with cells
                         cells = []
-                        for cell_text in row[:num_cols]:
-                            cells.append(parse_markdown_formatting(cell_text, max_text_length))
+                        for cell_text in row[:num_cols]:  # Limit to num_cols
+                            cells.append(parse_markdown_formatting(cell_text))
 
                         table_children.append({
                             "type": "table_row",
@@ -304,10 +331,12 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                             }
                         })
 
-                    # Notion has a 100-row limit - split if needed
+                    # Notion has a 100-row limit per table
+                    # Split large tables into multiple tables
                     MAX_TABLE_ROWS = 100
 
                     if len(table_children) <= MAX_TABLE_ROWS:
+                        # Single table fits within limit
                         blocks.append({
                             "object": "block",
                             "type": "table",
@@ -323,9 +352,12 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                         header_row = table_children[0] if table_children else None
                         data_rows = table_children[1:] if len(table_children) > 1 else []
 
+                        # Create tables in chunks of MAX_TABLE_ROWS-1 (to include header)
                         chunk_size = MAX_TABLE_ROWS - 1
                         for chunk_idx in range(0, len(data_rows), chunk_size):
                             chunk = data_rows[chunk_idx:chunk_idx + chunk_size]
+
+                            # Include header in each chunk
                             chunk_with_header = [header_row] + chunk if header_row else chunk
 
                             blocks.append({
@@ -339,7 +371,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                                 }
                             })
 
-                            # Add note between split tables
+                            # Add a note between split tables
                             if chunk_idx + chunk_size < len(data_rows):
                                 blocks.append({
                                     "object": "block",
@@ -364,7 +396,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "quote",
                 "quote": {
-                    "rich_text": parse_markdown_formatting(line[2:], max_text_length)
+                    "rich_text": parse_markdown_formatting(line[2:])
                 }
             })
         # Bulleted list
@@ -373,7 +405,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "bulleted_list_item",
                 "bulleted_list_item": {
-                    "rich_text": parse_markdown_formatting(line[2:], max_text_length)
+                    "rich_text": parse_markdown_formatting(line[2:])
                 }
             })
         # To-do list
@@ -384,7 +416,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "to_do",
                 "to_do": {
-                    "rich_text": parse_markdown_formatting(content, max_text_length),
+                    "rich_text": parse_markdown_formatting(content),
                     "checked": checked
                 }
             })
@@ -395,7 +427,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "numbered_list_item",
                 "numbered_list_item": {
-                    "rich_text": parse_markdown_formatting(content, max_text_length)
+                    "rich_text": parse_markdown_formatting(content)
                 }
             })
         # Paragraph (default)
@@ -404,7 +436,7 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {
-                    "rich_text": parse_markdown_formatting(line, max_text_length)
+                    "rich_text": parse_markdown_formatting(line)
                 }
             })
 
@@ -413,88 +445,14 @@ def markdown_to_notion_blocks(md_content: str, config: Config) -> List[Dict[str,
     return blocks
 
 
-def make_api_request(
-    url: str,
-    token: str,
-    api_version: str,
-    method: str = 'GET',
-    data: Optional[bytes] = None,
-    config: Optional[Config] = None
-) -> Dict[str, Any]:
-    """
-    Make an API request with retries and error handling.
-
-    Args:
-        url: API endpoint URL
-        token: Notion API token
-        api_version: Notion API version
-        method: HTTP method
-        data: Request payload
-        config: Configuration object
-
-    Returns:
-        API response as dict
-
-    Raises:
-        urllib.error.HTTPError: On API errors after retries
-    """
+def create_notion_page(token, title, parent_id):
+    """Create a new Notion page."""
+    url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "Notion-Version": api_version
+        "Notion-Version": NOTION_API_VERSION
     }
-
-    retry_attempts = config.retry_attempts if config else 3
-    retry_delay = config.retry_delay if config else 1.0
-
-    last_error = None
-
-    for attempt in range(retry_attempts):
-        try:
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
-            with urllib.request.urlopen(req) as response:
-                return json.loads(response.read())
-
-        except urllib.error.HTTPError as e:
-            last_error = e
-            error_body = e.read().decode('utf-8')
-
-            # Check if it's a rate limit error
-            if e.code == 429:
-                wait_time = retry_delay * (attempt + 1)
-                logger.warning(f"Rate limited. Waiting {wait_time}s before retry {attempt + 1}/{retry_attempts}")
-                time.sleep(wait_time)
-                continue
-
-            # For other errors, log and retry
-            logger.warning(f"Request failed (attempt {attempt + 1}/{retry_attempts}): {e.code} - {error_body}")
-
-            if attempt < retry_attempts - 1:
-                time.sleep(retry_delay)
-                continue
-            else:
-                raise
-
-        except Exception as e:
-            last_error = e
-            logger.warning(f"Request failed (attempt {attempt + 1}/{retry_attempts}): {str(e)}")
-
-            if attempt < retry_attempts - 1:
-                time.sleep(retry_delay)
-                continue
-            else:
-                raise
-
-    # If we got here, all retries failed
-    if last_error:
-        raise last_error
-    else:
-        raise RuntimeError("API request failed after all retries")
-
-
-def create_notion_page(token: str, api_version: str, title: str, parent_id: str, config: Config) -> Tuple[str, str]:
-    """Create a new Notion page."""
-    url = "https://api.notion.com/v1/pages"
 
     payload = {
         "parent": {"page_id": parent_id},
@@ -506,20 +464,37 @@ def create_notion_page(token: str, api_version: str, title: str, parent_id: str,
         }
     }
 
-    result = make_api_request(
+    req = urllib.request.Request(
         url,
-        token,
-        api_version,
-        method='POST',
         data=json.dumps(payload).encode('utf-8'),
-        config=config
+        headers=headers,
+        method='POST'
     )
 
-    return result['id'], result['url']
+    with urllib.request.urlopen(req) as response:
+        result = json.loads(response.read())
+        return result['id'], result['url']
 
 
-def delete_all_blocks(token: str, api_version: str, page_id: str, config: Config) -> int:
-    """Delete all child blocks from a page."""
+def delete_all_blocks(token, page_id, preserve_children=True):
+    """Delete child blocks from a page, optionally preserving child pages and databases.
+
+    Args:
+        token: Notion API token
+        page_id: Page ID to delete blocks from
+        preserve_children: If True, preserves child_page, child_database, and synced_block blocks
+
+    Returns:
+        Tuple of (deleted_count, preserved_count)
+    """
+    # Block types that should be preserved (nested pages/databases)
+    PROTECTED_BLOCK_TYPES = {'child_page', 'child_database', 'synced_block'}
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": NOTION_API_VERSION
+    }
+
     # Get all existing blocks
     all_blocks = []
     start_cursor = None
@@ -529,7 +504,10 @@ def delete_all_blocks(token: str, api_version: str, page_id: str, config: Config
         if start_cursor:
             url += f"&start_cursor={start_cursor}"
 
-        result = make_api_request(url, token, api_version, config=config)
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read())
+
         all_blocks.extend(result.get('results', []))
 
         if result.get('has_more'):
@@ -537,105 +515,97 @@ def delete_all_blocks(token: str, api_version: str, page_id: str, config: Config
         else:
             break
 
-    # Delete each block
+    # Delete each block (respecting protected types)
     deleted = 0
+    preserved = 0
     for block in all_blocks:
+        block_type = block.get('type', '')
         block_id = block['id']
+
+        # Skip protected block types if preserve_children is True
+        if preserve_children and block_type in PROTECTED_BLOCK_TYPES:
+            # Get the title of the child page/database for logging
+            if block_type == 'child_page':
+                title = block.get('child_page', {}).get('title', 'Untitled')
+            elif block_type == 'child_database':
+                title = block.get('child_database', {}).get('title', 'Untitled')
+            else:
+                title = block_type
+            print(f"   ⏭️  Preserving {block_type}: {title}")
+            preserved += 1
+            continue
+
         url = f"https://api.notion.com/v1/blocks/{block_id}"
 
+        req = urllib.request.Request(url, headers=headers, method='DELETE')
         try:
-            make_api_request(url, token, api_version, method='DELETE', config=config)
-            deleted += 1
-        except urllib.error.HTTPError:
+            with urllib.request.urlopen(req) as response:
+                deleted += 1
+        except urllib.error.HTTPError as e:
             # Ignore errors for blocks that can't be deleted
             pass
 
-        # Rate limiting
-        if config:
-            time.sleep(config.rate_limit_delay)
-
-    return deleted
+    return deleted, preserved
 
 
-def upload_blocks_to_page(
-    token: str,
-    api_version: str,
-    page_id: str,
-    blocks: List[Dict[str, Any]],
-    config: Config
-) -> int:
+def upload_blocks_to_page(token, page_id, blocks):
     """Upload blocks to a Notion page in batches."""
     url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_API_VERSION
+    }
 
     total_uploaded = 0
-    max_blocks = config.max_blocks_per_request
-
-    for i in range(0, len(blocks), max_blocks):
-        batch = blocks[i:i + max_blocks]
+    for i in range(0, len(blocks), MAX_BLOCKS_PER_REQUEST):
+        batch = blocks[i:i + MAX_BLOCKS_PER_REQUEST]
         payload = json.dumps({"children": batch}).encode('utf-8')
 
-        result = make_api_request(
-            url,
-            token,
-            api_version,
-            method='PATCH',
-            data=payload,
-            config=config
-        )
+        req = urllib.request.Request(url, data=payload, headers=headers, method='PATCH')
 
-        uploaded = len(result.get('results', []))
-        total_uploaded += uploaded
-        logger.info(f"Batch {i//max_blocks + 1}: {uploaded} blocks uploaded")
-
-        # Rate limiting between batches
-        if i + max_blocks < len(blocks):
-            time.sleep(config.rate_limit_delay)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read())
+            uploaded = len(result.get('results', []))
+            total_uploaded += uploaded
+            print(f"  Batch {i//MAX_BLOCKS_PER_REQUEST + 1}: {uploaded} blocks uploaded")
 
     return total_uploaded
 
 
-def upload_to_notion(
-    md_file: Path,
-    parent_id: Optional[str] = None,
-    update_mode: bool = False,
-    config: Optional[Config] = None
-) -> Tuple[str, str, int]:
-    """
-    Upload markdown file to Notion.
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: ./markdown-to-notion.py <markdown_file> <parent_page_id_or_url> [--update]")
+        print("\nExamples:")
+        print("  # Create new page:")
+        print("  ./markdown-to-notion.py schema.md 2bfc95e7d72e816486a5cfb9a97fa8c9")
+        print("\n  # Update existing page (requires frontmatter):")
+        print("  ./markdown-to-notion.py schema.md --update")
+        sys.exit(1)
 
-    Args:
-        md_file: Path to markdown file
-        parent_id: Parent page ID (for create mode)
-        update_mode: Whether to update existing page
-        config: Configuration object
+    md_file = Path(sys.argv[1])
+    update_mode = '--update' in sys.argv
+    force_mode = '--force' in sys.argv
 
-    Returns:
-        Tuple of (page_id, page_url, blocks_uploaded)
-
-    Raises:
-        ValueError: If invalid arguments
-        FileNotFoundError: If markdown file doesn't exist
-    """
     if not md_file.exists():
-        raise FileNotFoundError(f"File not found: {md_file}")
-
-    if config is None:
-        config = load_config()
+        print(f"Error: File not found: {md_file}")
+        sys.exit(1)
 
     # Read markdown file
-    logger.info(f"Reading markdown file: {md_file}")
+    print(f"📄 Reading markdown file: {md_file}")
     md_content = md_file.read_text()
 
     # Parse frontmatter
     frontmatter, content = parse_frontmatter(md_content)
 
-    # Generate title
+    # Generate title - include parent folder for common filenames
     if 'title' in frontmatter:
         title = frontmatter['title']
     else:
-        # Common filenames that need parent folder prefix
+        # Common filenames that need parent folder prefix for uniqueness
         common_names = ['README', 'readme', 'INDEX', 'index', 'todos', 'TODOS']
         if md_file.stem in common_names:
+            # Include parent directory name: "parent-folder/README"
             parent_name = md_file.parent.name
             title = f"{parent_name}/{md_file.stem}"
         else:
@@ -645,151 +615,81 @@ def upload_to_notion(
     if update_mode:
         page_id = frontmatter.get('notion_page_id')
         if not page_id:
-            raise ValueError("--update requires 'notion_page_id' in frontmatter")
-        logger.info(f"Update mode: Updating page {page_id}")
-        logger.info(f"   Title: {title}")
+            print("Error: --update requires 'notion_page_id' in frontmatter")
+            sys.exit(1)
+        print(f"🔄 Update mode: Updating page {page_id}")
+        print(f"   Title: {title}")
     else:
-        if not parent_id:
-            raise ValueError("parent_page_id required for creating new pages")
-        parent_id = extract_page_id(parent_id)
-        logger.info(f"Create mode: New page under {parent_id}")
-        logger.info(f"   Title: {title}")
+        if len(sys.argv) < 3:
+            print("Error: parent_page_id required for creating new pages")
+            sys.exit(1)
+        parent_id = extract_page_id(sys.argv[2])
+        print(f"✨ Create mode: New page under {parent_id}")
+        print(f"   Title: {title}")
+
+    # Read token
+    token = read_notion_token()
 
     # Convert markdown to Notion blocks
-    logger.info("Converting markdown to Notion blocks...")
-    blocks = markdown_to_notion_blocks(content, config)
-    logger.info(f"   Generated {len(blocks)} blocks")
+    print("\n🔄 Converting markdown to Notion blocks...")
+    blocks = markdown_to_notion_blocks(content)
+    print(f"   Generated {len(blocks)} blocks")
 
     # Create or update page
     if update_mode:
-        logger.info("Deleting existing blocks...")
-        deleted = delete_all_blocks(config.notion_token, config.api_version, page_id, config)
-        logger.info(f"   Deleted {deleted} blocks")
+        preserve_children = not force_mode
+        if force_mode:
+            print(f"\n⚠️  Force mode: will delete ALL blocks including child pages!")
+        print(f"\n🗑️  Deleting existing blocks...")
+        deleted, preserved = delete_all_blocks(token, page_id, preserve_children=preserve_children)
+        print(f"   Deleted {deleted} blocks")
+        if preserved > 0:
+            print(f"   Preserved {preserved} child pages/databases")
 
-        logger.info("Uploading new blocks...")
-        total_uploaded = upload_blocks_to_page(
-            config.notion_token,
-            config.api_version,
-            page_id,
-            blocks,
-            config
-        )
+        print(f"\n📤 Uploading new blocks...")
+        total_uploaded = upload_blocks_to_page(token, page_id, blocks)
         page_url = frontmatter.get('notion_url', f"https://notion.so/{page_id}")
     else:
-        logger.info("Creating new Notion page...")
-        page_id, page_url = create_notion_page(
-            config.notion_token,
-            config.api_version,
-            title,
-            parent_id,
-            config
-        )
-        logger.info(f"   Page created: {page_id}")
+        print(f"\n✨ Creating new Notion page...")
+        page_id, page_url = create_notion_page(token, title, parent_id)
+        print(f"   Page created: {page_id}")
 
-        logger.info(f"Uploading {len(blocks)} blocks...")
-        total_uploaded = upload_blocks_to_page(
-            config.notion_token,
-            config.api_version,
-            page_id,
-            blocks,
-            config
-        )
+        print(f"\n📤 Uploading {len(blocks)} blocks...")
+        total_uploaded = upload_blocks_to_page(token, page_id, blocks)
 
-        # Update markdown file with notion_page_id
-        frontmatter['notion_page_id'] = page_id
-        frontmatter['notion_url'] = page_url
-        frontmatter['title'] = title
-        frontmatter['uploaded'] = datetime.now().isoformat()
+        # Update markdown file with notion_page_id to prevent duplicate uploads
+        if not update_mode:
+            frontmatter['notion_page_id'] = page_id
+            frontmatter['notion_url'] = page_url
+            frontmatter['title'] = title
+            frontmatter['uploaded'] = datetime.now().isoformat()
 
-        # Write updated frontmatter
-        updated_content = "---\n"
-        for key, value in frontmatter.items():
-            updated_content += f"{key}: {value}\n"
-        updated_content += "---\n\n" + content
+            # Write updated frontmatter back to file
+            updated_content = "---\n"
+            for key, value in frontmatter.items():
+                updated_content += f"{key}: {value}\n"
+            updated_content += "---\n\n" + content
 
-        md_file.write_text(updated_content)
-        logger.info(f"   Updated {md_file.name} with notion_page_id")
+            md_file.write_text(updated_content)
+            print(f"   ✏️  Updated {md_file.name} with notion_page_id")
 
-    return page_id, page_url, total_uploaded
+    # Success
+    print(f"\n✅ Upload complete!")
+    print(f"   Total blocks: {total_uploaded}")
+    print(f"   Notion page: {page_url}")
 
-
-def main():
-    """Main entry point for command-line usage."""
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-
-    # Parse arguments
-    md_file = None
-    parent_id = None
-    update_mode = False
-    config_file = None
-
-    i = 1
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-
-        if arg == '--update':
-            update_mode = True
-        elif arg == '--config':
-            if i + 1 < len(sys.argv):
-                config_file = Path(sys.argv[i + 1])
-                i += 1
-            else:
-                print("Error: --config requires a file path")
-                sys.exit(1)
-        elif md_file is None:
-            md_file = Path(arg)
-        elif parent_id is None and not update_mode:
-            parent_id = arg
-        else:
-            print(f"Error: Unexpected argument: {arg}")
-            sys.exit(1)
-
-        i += 1
-
-    if md_file is None:
-        print("Error: markdown_file is required")
-        sys.exit(1)
-
-    if not update_mode and parent_id is None:
-        print("Error: parent_page_id required for creating new pages")
-        sys.exit(1)
-
-    # Load configuration
-    try:
-        config = load_config(config_file)
-    except ValueError as e:
-        print(f"Configuration error: {e}")
-        print("Set NOTION_TOKEN environment variable or create config.yaml")
-        sys.exit(1)
-
-    # Set up logging
-    logging.basicConfig(
-        level=getattr(logging, config.log_level),
-        format=config.log_format
-    )
-
-    # Upload to Notion
-    try:
-        page_id, page_url, total_uploaded = upload_to_notion(
-            md_file,
-            parent_id,
-            update_mode,
-            config
-        )
-
-        print(f"\n✅ Upload complete!")
-        print(f"   Total blocks: {total_uploaded}")
-        print(f"   Notion page: {page_url}")
-
-        return 0
-
-    except Exception as e:
-        logger.error(f"Upload failed: {e}", exc_info=True)
-        print(f"\n❌ Error: {e}", file=sys.stderr)
-        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        print(f"\n❌ HTTP Error {e.code}: {error_body}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

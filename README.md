@@ -1,125 +1,128 @@
----
-notion_page_id: 2c9c95e7-d72e-81b1-a82e-ca3499f08f68
-notion_url: https://www.notion.so/README-2c9c95e7d72e81b1a82eca3499f08f68
-title: /README
-uploaded: 2025-12-14T12:08:50.892111
----
-
 # Notion Sync Tools
 
-Bidirectional markdown ↔ Notion sync tools with full formatting preservation. Upload/download markdown files to Notion with YAML frontmatter tracking.
+Bidirectional markdown ↔ Notion sync tools with full formatting preservation.
 
-## Features
+## Quick Reference
 
-✨ **Full Markdown Support**
-- Bold, italic, code, strikethrough, links
-- Headings (H1, H2, H3)
-- Lists (bulleted, numbered, to-do)
-- Code blocks with syntax highlighting
-- Tables (auto-splits large tables > 100 rows)
-- Quotes, dividers, and more
+| Script | Purpose |
+|--------|---------|
+| `markdown-to-notion.py` | Upload markdown to Notion (create or update) |
+| `notion-to-markdown.py` | Download Notion page to markdown |
+| `read-notion-page.py` | Read page content to stdout |
+| `bulk-upload-to-notion.sh` | Batch upload all markdown files |
 
-🔄 **Bidirectional Sync**
-- Upload markdown → Notion (create or update)
-- Download Notion → markdown
-- YAML frontmatter tracking (prevents duplicates)
-- Bulk operations support
-
-🛡️ **Production Ready**
-- Configurable via YAML or environment variables
-- Comprehensive error handling
-- Rate limiting and retries
-- Proper logging
-- No hardcoded paths or credentials
-
-## Quick Start
-
-### 1. Installation
+## Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/graemejross/notion-sync-tools.git
-cd notion-sync-tools
 
-# Install (creates command-line tools)
-pip install -e .
+# Copy scripts to home directory (recommended)
+cp notion-sync-tools/src/notion_sync/*.py ~/
+
+# Or install as package
+cd notion-sync-tools && pip install -e .
 ```
 
-### 2. Configuration
+## Configuration
 
-Create a `config.yaml` file:
-
-```yaml
-# Notion API Configuration
-notion:
-  # Get your token from: https://www.notion.so/my-integrations
-  token: "secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-  api_version: "2022-06-28"
-
-# Rate limiting
-api:
-  max_blocks_per_request: 100
-  max_text_length: 2000
-  retry_attempts: 3
-  retry_delay: 1.0
-  rate_limit_delay: 0.5
-
-# Bulk upload exclusions
-bulk_upload:
-  exclude_patterns:
-    - ".git"
-    - "node_modules"
-    - "__pycache__"
-    - ".venv"
-    - "venv"
-    - ".pytest_cache"
-```
-
-Or use environment variables:
+Create `~/.notion-credentials`:
 
 ```bash
-export NOTION_TOKEN="secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-export NOTION_API_VERSION="2022-06-28"
+NOTION_TOKEN="secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
-### 3. Usage
-
-**Upload markdown to Notion:**
+Get your token from: https://www.notion.so/my-integrations
 
 ```bash
-# Create new page
-markdown-to-notion README.md <parent_page_id>
-
-# Update existing page (uses notion_page_id from frontmatter)
-markdown-to-notion README.md --update
+chmod 600 ~/.notion-credentials
 ```
 
-**Download from Notion:**
+## Scripts
+
+### markdown-to-notion.py
+
+Upload markdown files to Notion with full formatting preservation.
+
+**Create new page:**
+```bash
+~/markdown-to-notion.py <file.md> <parent_page_id>
+```
+
+**Update existing page:**
+```bash
+~/markdown-to-notion.py <file.md> --update
+```
+
+**Update with force (deletes child pages too):**
+```bash
+~/markdown-to-notion.py <file.md> --update --force
+```
+
+**Features:**
+- Full markdown support (bold, italic, code, links, tables)
+- YAML frontmatter tracking (prevents duplicate uploads)
+- Auto-splits large tables (>100 rows)
+- **Preserves child pages** on update (unless --force)
+
+**Example:**
+```bash
+# Create new page under parent
+~/markdown-to-notion.py ~/projects/my-project.md 2bfc95e7d72e816486a5cfb9a97fa8c9
+
+# Update existing (uses notion_page_id from frontmatter)
+~/markdown-to-notion.py ~/projects/my-project.md --update
+```
+
+### notion-to-markdown.py
+
+Download Notion pages to markdown with formatting preserved.
 
 ```bash
-# Download page to markdown
-notion-to-markdown <page_id_or_url> output.md
+~/notion-to-markdown.py <page_id_or_url> <output_file.md>
 ```
 
-**Bulk upload:**
+**Example:**
+```bash
+~/notion-to-markdown.py 2bfc95e7d72e816486a5cfb9a97fa8c9 ~/downloads/page.md
+~/notion-to-markdown.py "https://www.notion.so/My-Page-abc123" output.md
+```
+
+### read-notion-page.py
+
+Read Notion page content to stdout (useful for piping/scripting).
 
 ```bash
-# Upload all markdown files in a directory
-bulk-upload-notion <parent_page_id> /path/to/docs
+~/read-notion-page.py <page_id>
 ```
 
-## Documentation
+**Example:**
+```bash
+~/read-notion-page.py 2bfc95e7d72e816486a5cfb9a97fa8c9
+~/read-notion-page.py 2bfc95e7d72e816486a5cfb9a97fa8c9 | grep "keyword"
+```
 
-- Installation Guide (see installation page)
-- Configuration (see configuration page)
-- Usage Examples (see usage page)
-- API Reference (see api page)
+### bulk-upload-to-notion.sh
 
-## How It Works
+Batch upload all markdown files from a directory.
 
-### YAML Frontmatter Tracking
+```bash
+~/bulk-upload-to-notion.sh <parent_page_id> [directory]
+```
 
-When you upload a markdown file, the tool automatically adds YAML frontmatter:
+**Features:**
+- Recursive file discovery
+- Skips files already uploaded (checks frontmatter)
+- Progress logging
+
+**Example:**
+```bash
+~/bulk-upload-to-notion.sh 2bfc95e7d72e816486a5cfb9a97fa8c9 ~/projects/
+```
+
+## YAML Frontmatter
+
+When you upload a file, frontmatter is added automatically:
 
 ```yaml
 ---
@@ -129,53 +132,84 @@ title: My Page
 uploaded: 2025-12-14T10:30:00
 ---
 
-# Your markdown content here
+# Your content here
 ```
 
-This prevents duplicate uploads and enables update mode.
+This enables:
+- **Update mode**: `--update` uses the page ID from frontmatter
+- **Duplicate prevention**: Bulk upload skips files with existing page IDs
 
-### Formatting Preservation
+## Page IDs
 
-The tools preserve all markdown formatting when converting to Notion blocks:
+Page IDs can be found in Notion URLs:
+```
+https://www.notion.so/My-Page-2bfc95e7d72e816486a5cfb9a97fa8c9
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                              This is the page ID (32 hex chars)
+```
 
-- **Bold** → Notion bold annotation
-- *Italic* → Notion italic annotation
-- `code` → Notion code annotation
-- ~~Strikethrough~~ → Notion strikethrough
-- Links `[text](url)` → Notion link objects
-- Tables → Notion table blocks (auto-split if > 100 rows)
+Both formats work:
+- With dashes: `2bfc95e7-d72e-8164-86a5-cfb9a97fa8c9`
+- Without dashes: `2bfc95e7d72e816486a5cfb9a97fa8c9`
 
-## Examples
+## Formatting Support
 
-See the examples directory for:
-- Sample markdown files
-- Configuration examples
-- Common use cases
+| Markdown | Notion |
+|----------|--------|
+| `**bold**` | Bold text |
+| `*italic*` | Italic text |
+| `` `code` `` | Inline code |
+| `~~strike~~` | Strikethrough |
+| `[link](url)` | Hyperlink |
+| `# Heading` | Heading 1/2/3 |
+| `- item` | Bulleted list |
+| `1. item` | Numbered list |
+| `- [ ] task` | To-do item |
+| `> quote` | Quote block |
+| ` ``` ` | Code block |
+| `\|table\|` | Table (auto-splits if >100 rows) |
 
-## Requirements
+## Child Page Handling
 
-- Python 3.7+
-- No external dependencies (uses only Python standard library)
+When updating a page (`--update`), the script preserves:
+- **child_page** blocks (nested pages)
+- **child_database** blocks (inline databases)
+- **synced_block** blocks
+
+To delete everything including child pages, use `--force`:
+```bash
+~/markdown-to-notion.py file.md --update --force
+```
+
+## Common Issues
+
+**"NOTION_TOKEN not found"**
+- Create `~/.notion-credentials` with your token
+- Ensure the file has correct format: `NOTION_TOKEN="secret_xxx"`
+
+**"Page not found" or 403 error**
+- Share the page with your integration in Notion
+- Click "..." menu → "Add connections" → Select your integration
+
+**Large tables truncated**
+- Tables >100 rows are automatically split into multiple tables
+- This is a Notion API limitation
+
+## Integration with Claude Code
+
+These scripts are the preferred way to interact with Notion in Claude Code sessions:
+
+1. **Use scripts, not MCP tools** - Scripts save context and ensure consistency
+2. **Check CLAUDE.md** for key page IDs
+3. **End-of-session sync** uses these scripts to update documentation
+
+See: https://github.com/graemejross/claude-process for workflow rules.
 
 ## License
 
 MIT License - see LICENSE file for details.
 
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
 ## Support
 
 - **Issues:** https://github.com/graemejross/notion-sync-tools/issues
-- **Discussions:** https://github.com/graemejross/notion-sync-tools/discussions
-
-## Credits
-
-Created by Graeme Ross ([@graemejross](https://github.com/graemejross))
-
-Built with the [Notion API](https://developers.notion.com/).
+- **Repository:** https://github.com/graemejross/notion-sync-tools
