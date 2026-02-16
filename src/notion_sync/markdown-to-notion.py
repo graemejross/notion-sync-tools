@@ -3,11 +3,14 @@
 Upload markdown to Notion with full formatting and link preservation.
 
 Usage:
-    ./markdown-to-notion.py <markdown_file> <parent_page_id_or_url> [--update]
+    ./markdown-to-notion.py <markdown_file>                        # Auto-resolve parent from hierarchy
+    ./markdown-to-notion.py <markdown_file> <parent_page_id_or_url>  # Explicit parent
+    ./markdown-to-notion.py <markdown_file> --update               # Update existing page
 
 Features:
     - Preserves bold, italic, code, strikethrough, links
     - Reads YAML frontmatter for page ID (supports updates)
+    - Auto-resolves parent page from hierarchy (notion_parent_id or domain anchor)
     - Handles nested lists, code blocks, quotes
     - Preserves internal Notion links
     - Supports creating or updating pages
@@ -16,8 +19,15 @@ Options:
     --update    Update existing page (uses notion_page_id from frontmatter)
     --force     With --update: delete ALL blocks including child pages (dangerous!)
 
+Parent Resolution (create mode, no explicit parent):
+    1. File's notion_parent_id in frontmatter (project override)
+    2. Domain overview's notion_page_id (domain anchor, for files under 01-domains/)
+
 Example:
-    # Create new page:
+    # Create new page (auto-resolve parent from hierarchy):
+    ./markdown-to-notion.py ~/claude-docs/01-domains/bagdb/20-projects/myproject/README.md
+
+    # Create new page (explicit parent):
     ./markdown-to-notion.py schema.md 2bfc95e7d72e816486a5cfb9a97fa8c9
 
     # Update existing page (requires frontmatter with notion_page_id):
@@ -81,6 +91,78 @@ def parse_frontmatter(content):
                     frontmatter[key.strip()] = value.strip()
 
     return frontmatter, content_without_frontmatter
+
+
+def resolve_parent_page_id(file_path):
+    """Resolve Notion parent page ID from hierarchy.
+
+    Resolution chain:
+    1. File's own frontmatter notion_parent_id (project override)
+    2. Domain overview's notion_page_id (domain anchor)
+
+    Returns: (page_id, source_description) or (None, error_message)
+    """
+    file_path = Path(file_path).resolve()
+
+    # Read the file's own frontmatter
+    try:
+        content = file_path.read_text(errors="replace")
+        fm, _ = parse_frontmatter(content)
+    except OSError as e:
+        return None, f"Cannot read file: {e}"
+
+    # Check for project-level override
+    parent_id = fm.get("notion_parent_id")
+    if parent_id:
+        return parent_id.strip(), f"notion_parent_id from {file_path.name}"
+
+    # Walk up to find domain overview
+    # Expected path: .../01-domains/{domain}/20-projects/{name}/README.md
+    #            or: .../01-domains/{domain}/30-services/{name}/README.md
+    parts = file_path.parts
+    try:
+        domains_idx = parts.index("01-domains")
+    except ValueError:
+        return None, (
+            f"File is not under 01-domains/ hierarchy.\n"
+            f"  Provide parent page ID explicitly: ./markdown-to-notion.py {file_path.name} <parent_page_id>"
+        )
+
+    if domains_idx + 1 >= len(parts):
+        return None, "Cannot determine domain from path"
+
+    domain = parts[domains_idx + 1]
+
+    # Verify file is under 20-projects/ or 30-services/
+    path_str = str(file_path)
+    if "/20-projects/" not in path_str and "/30-services/" not in path_str:
+        return None, (
+            f"File is not under 20-projects/ or 30-services/.\n"
+            f"  Provide parent page ID explicitly: ./markdown-to-notion.py {file_path.name} <parent_page_id>"
+        )
+
+    # Build path to domain overview
+    domains_dir = Path(*parts[: domains_idx + 1])
+    overview_path = domains_dir / domain / "00-overview" / "README.md"
+
+    if not overview_path.exists():
+        return None, f"Domain overview not found: {overview_path}"
+
+    # Read domain overview frontmatter
+    try:
+        overview_content = overview_path.read_text(errors="replace")
+        overview_fm, _ = parse_frontmatter(overview_content)
+    except OSError as e:
+        return None, f"Cannot read domain overview: {e}"
+
+    domain_page_id = overview_fm.get("notion_page_id")
+    if not domain_page_id:
+        return None, (
+            f"Domain '{domain}' overview has no notion_page_id.\n"
+            f"  Provide parent page ID explicitly: ./markdown-to-notion.py {file_path.name} <parent_page_id>"
+        )
+
+    return domain_page_id.strip(), f"domain anchor for '{domain}'"
 
 
 # Module-level link resolution map: relative_path -> notion_url
@@ -685,10 +767,14 @@ def upload_blocks_to_page(token, page_id, blocks):
 def main():
     if len(sys.argv) < 2:
         print(
-            "Usage: ./markdown-to-notion.py <markdown_file> <parent_page_id_or_url> [--update]"
+            "Usage: ./markdown-to-notion.py <markdown_file> [parent_page_id_or_url] [--update]"
         )
         print("\nExamples:")
-        print("  # Create new page:")
+        print("  # Create new page (auto-resolve parent from hierarchy):")
+        print(
+            "  ./markdown-to-notion.py ~/claude-docs/01-domains/bagdb/20-projects/myproject/README.md"
+        )
+        print("\n  # Create new page (explicit parent):")
         print("  ./markdown-to-notion.py schema.md 2bfc95e7d72e816486a5cfb9a97fa8c9")
         print("\n  # Update existing page (requires frontmatter):")
         print("  ./markdown-to-notion.py schema.md --update")
@@ -731,11 +817,19 @@ def main():
         print(f"🔄 Update mode: Updating page {page_id}")
         print(f"   Title: {title}")
     else:
-        if len(sys.argv) < 3:
-            print("Error: parent_page_id required for creating new pages")
-            sys.exit(1)
-        parent_id = extract_page_id(sys.argv[2])
-        print(f"✨ Create mode: New page under {parent_id}")
+        # Determine parent: explicit arg > auto-resolve from hierarchy
+        explicit_args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        if explicit_args:
+            parent_id = extract_page_id(explicit_args[0])
+            print(f"✨ Create mode: New page under {parent_id}")
+        else:
+            parent_id, source = resolve_parent_page_id(md_file)
+            if parent_id is None:
+                print(f"Error: Cannot auto-resolve parent page.\n  {source}")
+                sys.exit(1)
+            parent_id = extract_page_id(parent_id)
+            print(f"✨ Create mode: New page under {parent_id}")
+            print(f"   (resolved from {source})")
         print(f"   Title: {title}")
 
     # Read token
